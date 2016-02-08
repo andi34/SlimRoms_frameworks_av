@@ -141,6 +141,9 @@ private:
     // will be sent to the client side using which the
     // frame buffers will be queued and dequeued
     sp<IGraphicBufferProducer> mGraphicBufferProducer;
+#ifdef STE_HARDWARE
+    sp<SurfaceMediaSource> mSurfaceMediaSource;
+#endif
     sp<ALooper> mLooper;
 
     sp<RecorderExtendedStats> mRecorderExtendedStats;
@@ -162,6 +165,11 @@ private:
     // depending on the videosource type
     status_t setupMediaSource(sp<MediaSource> *mediaSource);
     status_t setupCameraSource(sp<CameraSource> *cameraSource);
+#ifdef STE_HARDWARE
+    // setup the surfacemediasource for the encoder
+    status_t setupSurfaceMediaSource();
+#endif
+
     status_t setupAudioEncoder(const sp<MediaWriter>& writer);
     status_t setupVideoEncoder(sp<MediaSource> cameraSource, sp<MediaSource> *source);
 

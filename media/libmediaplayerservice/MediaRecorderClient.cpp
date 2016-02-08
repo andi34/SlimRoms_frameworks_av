@@ -95,8 +95,13 @@ status_t MediaRecorderClient::setPreviewSurface(const sp<IGraphicBufferProducer>
 status_t MediaRecorderClient::setVideoSource(int vs)
 {
     ALOGV("setVideoSource(%d)", vs);
+#ifndef STE_HARDWARE
     // Check camera permission for sources other than SURFACE
     if (vs != VIDEO_SOURCE_SURFACE && !checkPermission(cameraPermission)) {
+#else
+    // Check camera permission
+    if (!checkPermission(cameraPermission)) {
+#endif
         return PERMISSION_DENIED;
     }
     Mutex::Autolock lock(mLock);

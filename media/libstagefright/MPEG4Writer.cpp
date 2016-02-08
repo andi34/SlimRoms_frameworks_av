@@ -1850,9 +1850,11 @@ status_t MPEG4Writer::Track::stop() {
     }
     mDone = true;
 
+#ifndef STE_HARDWARE
     ALOGD("%s track source stopping", mIsAudio? "Audio": "Video");
     mSource->stop();
     ALOGD("%s track source stopped", mIsAudio? "Audio": "Video");
+#endif
 
     void *dummy;
     pthread_join(mThread, &dummy);
@@ -1862,6 +1864,17 @@ status_t MPEG4Writer::Track::stop() {
         ALOGE(" Filesize limit exceeded and zero samples written ");
         return ERROR_END_OF_STREAM;
     }
+
+#ifdef STE_HARDWARE
+    ALOGD("Stopping %s track source", mIsAudio? "Audio": "Video");
+    {
+        status_t status = mSource->stop();
+        if (err == OK && status != OK && status != ERROR_END_OF_STREAM) {
+            err = status;
+        }
+    }
+#endif
+
     return err;
 }
 

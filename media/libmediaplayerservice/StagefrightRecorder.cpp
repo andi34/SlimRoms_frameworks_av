@@ -42,12 +42,18 @@
 #include <media/stagefright/MediaDefs.h>
 #include <media/stagefright/MetaData.h>
 #include <media/stagefright/MediaCodecSource.h>
+#ifdef STE_HARDWARE
+#include <media/stagefright/SurfaceMediaSource.h>
+#endif
 #include <media/stagefright/OMXClient.h>
 #include <media/stagefright/OMXCodec.h>
 #include <media/stagefright/WAVEWriter.h>
 #include <media/MediaProfiles.h>
 #include <camera/ICamera.h>
 #include <camera/CameraParameters.h>
+#ifdef STE_HARDWARE
+#include <gui/Surface.h>
+#endif
 
 #include <utils/Errors.h>
 #include <sys/types.h>
@@ -90,6 +96,9 @@ StagefrightRecorder::StagefrightRecorder()
       mVideoSource(VIDEO_SOURCE_LIST_END),
       mCaptureTimeLapse(false),
       mStarted(false),
+#ifdef STE_HARDWARE
+      mSurfaceMediaSource(NULL),
+#endif
       mRecPaused(false) {
 
     ALOGV("Constructor");
@@ -123,7 +132,11 @@ status_t StagefrightRecorder::init() {
 // while encoding GL Frames
 sp<IGraphicBufferProducer> StagefrightRecorder::querySurfaceMediaSource() const {
     ALOGV("Get SurfaceMediaSource");
+#ifdef STE_HARDWARE
+    return mSurfaceMediaSource->getProducer();
+#else
     return mGraphicBufferProducer;
+#endif
 }
 
 status_t StagefrightRecorder::setAudioSource(audio_source_t as) {
@@ -868,9 +881,11 @@ status_t StagefrightRecorder::prepareInternal() {
 }
 
 status_t StagefrightRecorder::prepare() {
-    if (mVideoSource == VIDEO_SOURCE_SURFACE) {
+#ifndef STE_HARDWARE
+    if (mVideoSource == VIDEO_SOURCE_GRALLOC_BUFFER) {
         return prepareInternal();
     }
+#endif
     return OK;
 }
 
@@ -903,12 +918,16 @@ status_t StagefrightRecorder::start() {
     }
     status_t status = OK;
 
-    if (mVideoSource != VIDEO_SOURCE_SURFACE) {
+#ifndef STE_HARDWARE
+    if (mVideoSource != VIDEO_SOURCE_GRALLOC_BUFFER) {
+#endif
         status = prepareInternal();
         if (status != OK) {
             return status;
         }
+#ifndef STE_HARDWARE
     }
+#endif
 
     if (mAudioSource != AUDIO_SOURCE_CNT) {
         //check permissions
@@ -1554,13 +1573,54 @@ status_t StagefrightRecorder::setupMediaSource(
             return err;
         }
         *mediaSource = cameraSource;
-    } else if (mVideoSource == VIDEO_SOURCE_SURFACE) {
+    } else if (mVideoSource == VIDEO_SOURCE_GRALLOC_BUFFER) {
+#ifndef STE_HARDWARE
         *mediaSource = NULL;
+#else
+        // If using GRAlloc buffers, setup surfacemediasource.
+        // Later a handle to that will be passed
+        // to the client side when queried
+        status_t err = setupSurfaceMediaSource();
+        if (err != OK) {
+            return err;
+        }
+        *mediaSource = mSurfaceMediaSource;
+#endif
     } else {
         return INVALID_OPERATION;
     }
     return OK;
 }
+
+#ifdef STE_HARDWARE
+// setupSurfaceMediaSource creates a source with the given
+// width and height and framerate.
+// TODO: This could go in a static function inside SurfaceMediaSource
+// similar to that in CameraSource
+status_t StagefrightRecorder::setupSurfaceMediaSource() {
+    status_t err = OK;
+    mSurfaceMediaSource = new SurfaceMediaSource(mVideoWidth, mVideoHeight);
+    if (mSurfaceMediaSource == NULL) {
+        return NO_INIT;
+    }
+
+    if (mFrameRate == -1) {
+        int32_t frameRate = 0;
+        CHECK (mSurfaceMediaSource->getFormat()->findInt32(
+                                        kKeyFrameRate, &frameRate));
+        ALOGI("Frame rate is not explicitly set. Use the current frame "
+             "rate (%d fps)", frameRate);
+        mFrameRate = frameRate;
+    } else {
+        err = mSurfaceMediaSource->setFrameRate(mFrameRate);
+    }
+    CHECK(mFrameRate != -1);
+
+    mIsMetaDataStoredInVideoBuffers =
+        mSurfaceMediaSource->isMetaDataStoredInVideoBuffers();
+    return err;
+}
+#endif
 
 status_t StagefrightRecorder::setupCameraSource(
         sp<CameraSource> *cameraSource) {
@@ -1635,7 +1695,10 @@ status_t StagefrightRecorder::setupVideoEncoder(
     source->clear();
 
     sp<AMessage> format = new AMessage();
-
+#ifdef STE_HARDWARE
+    format->setInt32("bitrate", mVideoBitRate);
+    format->setInt32("frame-rate", mFrameRate);
+#endif
     switch (mVideoEncoder) {
         case VIDEO_ENCODER_H263:
             format->setString("mime", MEDIA_MIMETYPE_VIDEO_H263);
@@ -1675,15 +1738,22 @@ status_t StagefrightRecorder::setupVideoEncoder(
         format->setInt32("width", width);
         format->setInt32("height", height);
         format->setInt32("stride", stride);
+#ifdef STE_HARDWARE
+        format->setInt32("i-frame-interval", mIFramesIntervalSec);
+#endif
         format->setInt32("slice-height", sliceHeight);
         format->setInt32("color-format", colorFormat);
     } else {
         format->setInt32("width", mVideoWidth);
         format->setInt32("height", mVideoHeight);
+#ifdef STE_HARDWARE
+        format->setInt32("i-frame-interval", mIFramesIntervalSec);
+#endif
         format->setInt32("stride", mVideoWidth);
         format->setInt32("slice-height", mVideoWidth);
         format->setInt32("color-format", OMX_COLOR_FormatAndroidOpaque);
 
+#ifndef STE_HARDWARE
         // set up time lapse/slow motion for surface source
         if (mCaptureTimeLapse) {
             if (mTimeBetweenTimeLapseFrameCaptureUs <= 0) {
@@ -1694,8 +1764,8 @@ status_t StagefrightRecorder::setupVideoEncoder(
             format->setInt64("time-lapse",
                     mTimeBetweenTimeLapseFrameCaptureUs);
         }
+#endif
     }
-
     format->setInt32("bitrate", mVideoBitRate);
     format->setInt32("frame-rate", mFrameRate);
     format->setInt32("i-frame-interval", mIFramesIntervalSec);
@@ -1723,20 +1793,41 @@ status_t StagefrightRecorder::setupVideoEncoder(
         format->setInt32("level", mVideoEncoderLevel);
     }
 
+#ifdef STE_HARDWARE
+    OMXClient client;
+    CHECK_EQ(client.connect(), (status_t)OK);
+#endif
     uint32_t flags = 0;
     if (mIsMetaDataStoredInVideoBuffers) {
+#ifndef STE_HARDWARE
         flags |= MediaCodecSource::FLAG_USE_METADATA_INPUT;
+#else
+        flags |= OMXCodec::kStoreMetaDataInVideoBuffers;
+#endif
     }
 
+#ifndef STE_HARDWARE
     if (cameraSource == NULL) {
         flags |= MediaCodecSource::FLAG_USE_SURFACE_INPUT;
+#else
+    if (mCaptureTimeLapse) {
+        flags |= OMXCodec::kOnlySubmitOneInputBufferAtOneTime;
+#endif
     }
+
 
     if (mRecorderExtendedStats != NULL) {
         format->setObject(MEDIA_EXTENDED_STATS, mRecorderExtendedStats);
     }
+#ifndef STE_HARDWARE
     sp<MediaCodecSource> encoder =
             MediaCodecSource::Create(mLooper, format, cameraSource, flags);
+#else
+    sp<MediaSource> encoder = OMXCodec::Create(
+            client.interface(), format,
+            true /* createEncoder */, cameraSource,
+            NULL, flags);
+#endif
     if (encoder == NULL) {
         ALOGE("Failed to create video encoder");
         // When the encoder fails to be created, we need
@@ -1748,9 +1839,11 @@ status_t StagefrightRecorder::setupVideoEncoder(
         return UNKNOWN_ERROR;
     }
 
+#ifndef STE_HARDWARE
     if (cameraSource == NULL) {
         mGraphicBufferProducer = encoder->getGraphicBufferProducer();
     }
+#endif
 
     mVideoSourceNode = cameraSource;
     mVideoEncoderOMX = encoder;
@@ -1851,13 +1944,17 @@ status_t StagefrightRecorder::setupMPEG4orWEBMRecording() {
     if (mMaxFileSizeBytes != 0) {
         writer->setMaxFileSize(mMaxFileSizeBytes);
     }
+#ifndef STE_HARDWARE
     if (mVideoSource == VIDEO_SOURCE_DEFAULT
             || mVideoSource == VIDEO_SOURCE_CAMERA) {
         mStartTimeOffsetMs = mEncoderProfiles->getStartTimeOffsetMs(mCameraId);
-    } else if (mVideoSource == VIDEO_SOURCE_SURFACE) {
+    } else if (mVideoSource == VIDEO_SOURCE_GRALLOC_BUFFER) {
         // surface source doesn't need large initial delay
         mStartTimeOffsetMs = 200;
     }
+#else
+    mStartTimeOffsetMs = mEncoderProfiles->getStartTimeOffsetMs(mCameraId);
+#endif
     if (mStartTimeOffsetMs > 0) {
         writer->setStartTimeOffsetMs(mStartTimeOffsetMs);
     }
@@ -1953,7 +2050,9 @@ status_t StagefrightRecorder::stop() {
         mWriter.clear();
     }
 
+#ifndef STE_HARDWARE
     mGraphicBufferProducer.clear();
+#endif
 
     if (mOutputFd >= 0) {
         ::close(mOutputFd);
