@@ -1076,9 +1076,11 @@ sp<MediaSource> StagefrightRecorder::createAudioSource() {
         format->setInt32("time-scale", mAudioTimeScale);
     }
 
+/*
     if (mRecorderExtendedStats != NULL) {
         format->setObject(MEDIA_EXTENDED_STATS, mRecorderExtendedStats);
     }
+*/
     sp<MediaSource> audioEncoder =
             MediaCodecSource::Create(mLooper, format, audioSource);
     // If encoder could not be created (as in LPCM), then
@@ -1689,7 +1691,7 @@ status_t StagefrightRecorder::setupVideoEncoder(
             break;
 
         case VIDEO_ENCODER_H265:
-            format->setString("mime", MEDIA_MIMETYPE_VIDEO_HEVC);
+            enc_meta->setCString(kKeyMIMEType, MEDIA_MIMETYPE_VIDEO_HEVC);
             break;
 
         default:
@@ -1729,7 +1731,7 @@ status_t StagefrightRecorder::setupVideoEncoder(
     if (mVideoTimeScale > 0) {
         enc_meta->setInt32(kKeyTimeScale, mVideoTimeScale);
     }
-
+/*
     if (cameraSource != NULL) {
         sp<MetaData> meta = cameraSource->getFormat();
         status_t retVal = ExtendedUtils::HFR::initializeHFR(
@@ -1738,7 +1740,7 @@ status_t StagefrightRecorder::setupVideoEncoder(
             return retVal;
         }
     }
-
+*/
     ExtendedUtils::ShellProp::setEncoderProfile(mVideoEncoder,
             mVideoEncoderProfile, mVideoEncoderLevel);
 
@@ -1761,9 +1763,11 @@ status_t StagefrightRecorder::setupVideoEncoder(
         encoder_flags |= OMXCodec::kOnlySubmitOneInputBufferAtOneTime;
     }
 
+/*
     if (mRecorderExtendedStats != NULL) {
         format->setObject(MEDIA_EXTENDED_STATS, mRecorderExtendedStats);
     }
+*/
     sp<MediaSource> encoder = OMXCodec::Create(
             client.interface(), enc_meta,
             true /* createEncoder */, cameraSource,
